@@ -655,7 +655,7 @@ int open_tmpinfile(rzip_control *control)
 		register_infile(control, control->infile, (DECOMPRESS || TEST_ONLY) && STDIN);
 		/* Unlink temporary file immediately to minimise chance of files left
 		* lying around in cases of failure_return((. */
-		if (unlikely(unlink(control->infile))) {
+		if (unlikely(!lr_discard_open(control->infile))) {
 			fatal("Failed to unlink tmpfile: %s\n", control->infile);
 			close(fd_in);
 			return -1;
@@ -1071,8 +1071,10 @@ bool decompress_file(rzip_control *control)
 			fd_hist = open(control->outfile, O_RDONLY);
 			if (unlikely(fd_hist == -1))
 				fatal_return(("Failed to open history file %s\n", control->outfile), false);
-			/* Unlink temporary file as soon as possible */
-			if (unlikely(unlink(control->outfile)))
+			/* Unlink temporary file as soon as possible. On Windows
+			 * this cannot happen until the descriptors close; see
+			 * lr_discard_closed() below. */
+			if (unlikely(!lr_discard_open(control->outfile)))
 				fatal_return(("Failed to unlink tmpfile: %s\n", control->outfile), false);
 		}
 	}
@@ -1145,6 +1147,9 @@ bool decompress_file(rzip_control *control)
 	if (fd_out > 0) {
 		if (unlikely(close(fd_hist) || close(fd_out)))
 			fatal_return(("Failed to close files\n"), false);
+		/* The temporary outfile could not be unlinked while open. */
+		if (TEST_ONLY || STDOUT)
+			lr_discard_closed(control->outfile);
 	}
 
 	if (unlikely(!STDIN && !STDOUT && !TEST_ONLY && !preserve_times(control, fd_in)))
@@ -1152,6 +1157,8 @@ bool decompress_file(rzip_control *control)
 
 	if ( ! IS_FROM_FILE ) {
 		close(fd_in);
+		if (STDIN)
+			lr_discard_closed(control->infile);
 	}
 
 	if (!KEEP_FILES && !STDIN) {
@@ -1631,8 +1638,9 @@ bool compress_file(rzip_control *control)
 	} else {
 		control->fd_out = fd_out = open_tmpoutfile(control);
 		if (likely(fd_out != -1)) {
-			/* Unlink temporary file as soon as possible */
-			if (unlikely(unlink(control->outfile)))
+			/* Unlink temporary file as soon as possible. On Windows
+			 * this is deferred until the descriptors close. */
+			if (unlikely(!lr_discard_open(control->outfile)))
 				fatal_return(("Failed to unlink tmpfile: %s\n", control->outfile), false);
 		}
 		if (unlikely(!open_tmpoutbuf(control)))
@@ -1678,6 +1686,10 @@ bool compress_file(rzip_control *control)
 		fatal_return(("Failed to close fd_out\n"), false);
 	if (TMP_OUTBUF)
 		close_tmpoutbuf(control);
+	if (STDIN)
+		lr_discard_closed(control->infile);
+	if (STDOUT)
+		lr_discard_closed(control->outfile);
 
 	if (!KEEP_FILES && !STDIN) {
 		if (unlikely(unlink(control->infile)))
