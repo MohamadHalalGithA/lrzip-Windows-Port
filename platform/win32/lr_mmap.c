@@ -36,6 +36,7 @@ struct lr_mapping {
 	int fd;
 	lr_i64 offset;
 	lr_map_mode mode;
+	bool anon_backed;	/* file mode, but nothing left to map (see below) */
 };
 
 static size_t lr_granularity(void)
@@ -60,6 +61,16 @@ static size_t lr_page(void)
 		p = si.dwPageSize ? si.dwPageSize : 4096;
 	}
 	return p;
+}
+
+/* Bytes of the file at or after `offset`, or -1 if the size is unavailable. */
+static lr_i64 lr_avail_from(HANDLE fh, lr_i64 offset)
+{
+	LARGE_INTEGER sz;
+
+	if (!GetFileSizeEx(fh, &sz))
+		return -1;
+	return sz.QuadPart - offset;
 }
 
 /* rzip_fd() retries at 90% of the size when errno is ENOMEM and treats
@@ -89,7 +100,8 @@ static void lr_map_errno(DWORD err)
 /* Map a view of an existing section at an arbitrary byte offset, handling the
    granularity rounding. Returns the caller-visible address, or NULL. */
 static void *lr_map_view(HANDLE mapping, lr_i64 offset, size_t len,
-			 lr_map_mode mode, void **base_out, size_t *delta_out)
+			 lr_map_mode mode, lr_i64 avail,
+			 void **base_out, size_t *delta_out)
 {
 	size_t gran = lr_granularity();
 	lr_i64 base_off;
@@ -101,6 +113,15 @@ static void *lr_map_view(HANDLE mapping, lr_i64 offset, size_t len,
 	base_off = offset - (lr_i64)delta;
 
 	access = (mode == LR_MAP_COPY) ? FILE_MAP_COPY : FILE_MAP_READ;
+
+	/* mmap() happily maps past end of file: the tail of the last page reads
+	   as zero and anything beyond raises SIGBUS. MapViewOfFile refuses
+	   outright, so a request that overhangs EOF has to be trimmed here.
+	   rzip.c relies on the POSIX behaviour in two places -- a one-byte input
+	   still gets a page-sized buf_high, and an empty input still gets a
+	   window -- and neither ever reads the bytes past EOF. */
+	if (avail >= 0 && (lr_i64)(len + delta) > avail + (lr_i64)delta)
+		len = (size_t)avail;
 
 	view = MapViewOfFile(mapping, access,
 			     (DWORD)((uint64_t)base_off >> 32),
@@ -152,6 +173,7 @@ lr_mapping *lr_map_create(int fd, lr_i64 offset, size_t len, lr_map_mode mode)
 		intptr_t raw = _get_osfhandle(fd);
 		HANDLE fh;
 		DWORD protect;
+		lr_i64 avail;
 
 		if (raw == -1) {
 			errno = EBADF;
@@ -159,6 +181,27 @@ lr_mapping *lr_map_create(int fd, lr_i64 offset, size_t len, lr_map_mode mode)
 			return NULL;
 		}
 		fh = (HANDLE)raw;
+
+		avail = lr_avail_from(fh, offset);
+
+		/* Nothing of the file lies at this offset -- an empty input, or a
+		   window starting at EOF. CreateFileMapping cannot represent that
+		   at all (a zero-length file has no section), while mmap() returns
+		   a page of zeros. Hand back anonymous zeroed memory so the caller
+		   gets the pointer it expects; rzip.c has a zero-length chunk here
+		   and never reads it. */
+		if (avail <= 0) {
+			m->base = VirtualAlloc(NULL, len, MEM_RESERVE | MEM_COMMIT,
+					       PAGE_READWRITE);
+			if (!m->base) {
+				lr_map_errno(GetLastError());
+				free(m);
+				return NULL;
+			}
+			m->addr = m->base;
+			m->anon_backed = true;
+			return m;
+		}
 
 		protect = (mode == LR_MAP_COPY) ? PAGE_WRITECOPY : PAGE_READONLY;
 
@@ -171,7 +214,7 @@ lr_mapping *lr_map_create(int fd, lr_i64 offset, size_t len, lr_map_mode mode)
 			return NULL;
 		}
 
-		m->addr = lr_map_view(m->mapping, offset, len, mode,
+		m->addr = lr_map_view(m->mapping, offset, len, mode, avail,
 				      &m->base, &m->delta);
 		if (!m->addr) {
 			CloseHandle(m->mapping);
@@ -198,7 +241,7 @@ bool lr_map_move(lr_mapping *m, lr_i64 offset, size_t len)
 	void *new_base = NULL, *new_addr;
 	size_t new_delta = 0;
 
-	if (!m || m->mode == LR_MAP_ANON || !len || offset < 0) {
+	if (!m || m->mode == LR_MAP_ANON || m->anon_backed || !len || offset < 0) {
 		errno = EINVAL;
 		return false;
 	}
@@ -207,6 +250,7 @@ bool lr_map_move(lr_mapping *m, lr_i64 offset, size_t len)
 	   the caller's pointer still valid. Holding both briefly costs address
 	   space, which lrzip has: it requires a 64-bit build. */
 	new_addr = lr_map_view(m->mapping, offset, len, m->mode,
+			       lr_avail_from((HANDLE)_get_osfhandle(m->fd), offset),
 			       &new_base, &new_delta);
 	if (!new_addr)
 		return false;		/* errno set by lr_map_view */
@@ -250,7 +294,7 @@ void lr_map_destroy(lr_mapping *m)
 	if (!m)
 		return;
 
-	if (m->mode == LR_MAP_ANON) {
+	if (m->mode == LR_MAP_ANON || m->anon_backed) {
 		/* MEM_RELEASE frees the whole reservation and requires a zero
 		   length, decommitted tail included. */
 		VirtualFree(m->base, 0, MEM_RELEASE);
