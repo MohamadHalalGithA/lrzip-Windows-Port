@@ -146,6 +146,24 @@ static inline int sliding_in_low(const struct sliding_buffer *sb, i64 p, i64 len
 	       p + len <= sb->offset_low + sb->size_low;
 }
 
+/* True if the single byte at p is inside the low map. */
+static inline int sliding_pos_in_low(const struct sliding_buffer *sb, i64 p)
+{
+	return p >= sb->offset_low && p < sb->offset_low + sb->size_low;
+}
+
+/* There is only ONE high window, so two positions that both fall outside the
+   low map cannot be held as pointers at the same time: resolving the second
+   remaps the window and invalidates the first. Upstream holds both anyway and
+   gets away with it because it passes the old address as an mmap() hint, which
+   Linux almost always honours. lr_map_move() genuinely relocates the view, so
+   the stale pointer faults. Callers must use the byte-at-a-time path below
+   whenever this returns true. */
+static inline int sliding_both_high(const struct sliding_buffer *sb, i64 a, i64 b)
+{
+	return !sliding_pos_in_low(sb, a) && !sliding_pos_in_low(sb, b);
+}
+
 static uchar *sliding_get_sb(rzip_control *control, i64 p)
 {
 	struct sliding_buffer *sb = &control->sb;
@@ -677,8 +695,23 @@ sliding_match_len(rzip_control *control, struct rzip_state *st, i64 p0, i64 op,
 	f = 0;
 	while (f < max_fwd) {
 		i64 c1, c2, n, m;
-		uchar *a = sliding_map_fwd(control, p0 + f, &c1);
-		uchar *b = sliding_map_fwd(control, op0 + f, &c2);
+		uchar *a, *b;
+
+		/* Both sides outside the low map: compare one byte at a time,
+		 * dereferencing each pointer before the next lookup can move
+		 * the high window. See sliding_both_high(). */
+		if (sliding_both_high(sb, p0 + f, op0 + f)) {
+			uchar av = *sliding_get_sb(control, p0 + f);
+			uchar bv = *sliding_get_sb(control, op0 + f);
+
+			if (av != bv)
+				break;
+			f++;
+			continue;
+		}
+
+		a = sliding_map_fwd(control, p0 + f, &c1);
+		b = sliding_map_fwd(control, op0 + f, &c2);
 
 		n = c1 < c2 ? c1 : c2;
 		if (n > max_fwd - f)
@@ -719,6 +752,17 @@ sliding_match_len(rzip_control *control, struct rzip_state *st, i64 p0, i64 op,
 			n = o;
 		if (n <= 0)
 			break;
+
+		if (sliding_both_high(sb, p - 1, o - 1)) {
+			uchar av = *sliding_get_sb(control, p - 1);
+			uchar bv = *sliding_get_sb(control, o - 1);
+
+			if (av != bv)
+				break;
+			p--;
+			o--;
+			continue;
+		}
 
 		a = sliding_get_sb(control, p - 1);
 		b = sliding_get_sb(control, o - 1);
@@ -1114,7 +1158,10 @@ static inline void mmap_stdin(rzip_control *control, uchar *buf,
 
 	total = 0;
 	while (len > 0) {
-		ret = read(fileno(control->inFILE), offset_buf, (size_t)len);
+		/* Clamp: a single read of the whole window fails outright on
+		 * Windows rather than returning a short count. */
+		ret = read(fileno(control->inFILE), offset_buf,
+			   (size_t)MIN(len, (i64)LR_IO_CHUNK));
 		if (unlikely(ret < 0))
 			failure("Failed to read in mmap_stdin\n");
 		total += ret;
