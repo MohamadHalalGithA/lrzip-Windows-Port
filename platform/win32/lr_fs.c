@@ -118,3 +118,22 @@ bool lr_set_owner(int fd, unsigned int uid, unsigned int gid)
 	return true;
 }
 
+/* SESSION 11 -- see lr_platform.h for why this is split in two. */
+bool lr_discard_open(const char *path)
+{
+	(void)path;
+	return true;		/* deferred to lr_discard_closed() */
+}
+
+bool lr_discard_closed(const char *path)
+{
+	if (!path)
+		return true;
+
+	/* Already gone is success: the caller cannot always tell whether the
+	   temporary file was ever created. */
+	if (DeleteFileA(path))
+		return true;
+
+	return GetLastError() == ERROR_FILE_NOT_FOUND;
+}
