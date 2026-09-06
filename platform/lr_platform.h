@@ -59,7 +59,7 @@ extern "C" {
    16 GB machine, since the compression window is sized from RAM -- returns -1
    with EINVAL rather than reading what it can.
 
-   Callers that already loop only need to clamp each call to this. SESSION 11 */
+   Callers that already loop only need to clamp each call to this.*/
 #define LR_IO_CHUNK ((size_t)1 << 30)
 
 /* ------------------------------------------------------------------- startup
