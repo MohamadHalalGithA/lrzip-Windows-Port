@@ -50,6 +50,18 @@ typedef int64_t lr_i64;
 extern "C" {
 #endif
 
+/* ------------------------------------------------------------------------ io
+   Largest transfer to attempt in a single read() or write() call.
+
+   Linux silently caps a huge read at 0x7ffff000 and returns a short count, so
+   a caller that loops never notices. Windows does not: measured on UCRT64,
+   read() with a count of 2.6 GB -- which is what mmap_stdin() asks for on a
+   16 GB machine, since the compression window is sized from RAM -- returns -1
+   with EINVAL rather than reading what it can.
+
+   Callers that already loop only need to clamp each call to this. SESSION 11 */
+#define LR_IO_CHUNK ((size_t)1 << 30)
+
 /* ------------------------------------------------------------------- startup
    Call once, as the first statement in main(), before anything is opened.
 
@@ -89,6 +101,24 @@ lr_i64 lr_free_space(int fd);
    implementation. Same reasoning retired the planned lr_time_ms() below.
    Under the settled MinGW-only scope there is no second implementation to
    abstract over; if that scope ever widens, these come back.     SESSION 9 */
+
+/* Discard a temporary file, in two halves, because the platforms do it at
+   different moments.
+
+   POSIX unlinks the file while it is still open: the name disappears at once
+   and the open descriptors keep working, so the file cannot survive a crash.
+   Windows refuses to delete an open file, and the delete-on-close flag cannot
+   be used either -- the callers open a second descriptor BY NAME after
+   creating the file, which a delete-pending file will not allow.
+
+   So lr_discard_open() removes it now on POSIX and does nothing on Windows,
+   and lr_discard_closed() does nothing on POSIX and removes it on Windows
+   once the descriptors are closed. Call BOTH: each is a no-op on the platform
+   that does not need it. The Windows half means a hard kill can leave a temp
+   file behind, which POSIX avoids -- an accepted difference, not an
+   oversight.                                                  SESSION 11 */
+bool lr_discard_open(const char *path);
+bool lr_discard_closed(const char *path);
 
 /* Flush a descriptor's written data to the storage device.       SESSION 7 */
 bool lr_fsync(int fd);
