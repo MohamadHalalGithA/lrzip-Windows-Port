@@ -1,6 +1,7 @@
 /* Filesystem queries, POSIX.                            SESSION 6, SESSION 7 */
 
 #include "lr_platform.h"
+#include <unistd.h>
 
 /* SESSION 6 */
 lr_i64 lr_free_space(int fd)
@@ -34,3 +35,14 @@ bool lr_set_owner(int fd, unsigned int uid, unsigned int gid)
 	return fchown(fd, (uid_t)uid, (gid_t)gid) == 0;
 }
 
+/* SESSION 11 -- see lr_platform.h for why this is split in two. */
+bool lr_discard_open(const char *path)
+{
+	return unlink(path) == 0;
+}
+
+bool lr_discard_closed(const char *path)
+{
+	(void)path;
+	return true;		/* already gone */
+}
