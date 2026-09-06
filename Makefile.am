@@ -37,7 +37,9 @@ noinst_HEADERS = \
   platform/lr_platform.h \
   platform/lr_platform_posix.h \
   platform/lr_platform_win32.h \
-  platform/win32/lr_win32.h
+  platform/win32/lr_win32.h \
+  platform/win32/lrzip.rc \
+  platform/win32/lrzip.manifest
 
 lrztardir = $(bindir)
 lrztar_SCRIPTS = lrztar
@@ -105,6 +107,15 @@ lrzip_LDADD = libtmplrzip.la
 if LR_PLATFORM_WIN32
 # BCryptGenRandom, for lr_secure_random().
 lrzip_LDADD += -lbcrypt
+
+# The manifest that switches the process to UTF-8, so non-ASCII filenames
+# reach the narrow open()/stat() calls intact.
+lrzip_LDADD += lrzip_manifest.$(OBJEXT)
+lrzip_manifest.$(OBJEXT): $(srcdir)/platform/win32/lrzip.rc \
+			 $(srcdir)/platform/win32/lrzip.manifest
+	$(WINDRES) -I$(srcdir)/platform/win32 \
+		$(srcdir)/platform/win32/lrzip.rc -O coff -o $@
+CLEANFILES = lrzip_manifest.$(OBJEXT)
 endif
 if STATIC
   lrzip_LDFLAGS = -all-static

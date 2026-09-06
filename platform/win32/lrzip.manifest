@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Makes UTF-8 the process's ANSI code page.
+
+  lrzip passes filenames around as char *, and every open()/fopen()/stat() in
+  the codebase is the narrow variant. On Windows those go through the ANSI code
+  page, which on a typical install is CP1252: a name containing Japanese,
+  Cyrillic or emoji cannot be represented, and the call fails with the name
+  mangled to "???". Declaring UTF-8 here makes the narrow calls interpret their
+  bytes as UTF-8, so the existing code handles every filename without being
+  converted to the wide API.
+
+  Requires Windows 10 1903 or later. On older systems the setting is ignored
+  and behaviour falls back to the ANSI code page, which is the status quo
+  rather than a regression.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="lrzip" version="1.0.0.0"/>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings xmlns:ws2="http://schemas.microsoft.com/SMI/2019/WindowsSettings">
+      <ws2:activeCodePage>UTF-8</ws2:activeCodePage>
+    </windowsSettings>
+  </application>
+</assembly>

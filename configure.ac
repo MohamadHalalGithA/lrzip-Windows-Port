@@ -69,6 +69,11 @@ AC_MSG_NOTICE([Platform backend: ${lr_platform} (host_os=${host_os})])
 AM_CONDITIONAL([LR_PLATFORM_WIN32], [test x"$lr_platform" = x"win32"])
 AC_SUBST([lr_platform])
 
+# windres compiles the UTF-8 manifest into lrzip.exe; see
+# platform/win32/lrzip.manifest for why that matters.
+AS_IF([test x"$lr_platform" = x"win32"], [AC_CHECK_TOOL([WINDRES], [windres], [no])])
+AC_SUBST([WINDRES])
+
 dnl Checks for programs.
 AC_PROG_CC
 AC_PROG_CXX
