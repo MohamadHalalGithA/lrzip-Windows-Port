@@ -298,6 +298,17 @@ static inline i64 enc_loops(uchar b1, uchar b2)
 		return -1;
 	if (b1 != 0 && (i64)b2 > (INT64_MAX >> b1))
 		return -1;
+
+	/* The shift guards above stop undefined behaviour but not a denial of
+	 * service: b1=40 still decodes to 2.8e14 iterations, which is roughly
+	 * 500 days of hashing, from two attacker-controlled header bytes. A
+	 * legitimate archive written today asks for about 1.1e7 -- under two
+	 * seconds -- and nloops() grows that by MOORE (1.835/year) over a
+	 * quarter-rate clock, so the cap below leaves roughly forty years of
+	 * headroom while bounding a hostile archive to minutes. */
+	if ((i64)b2 << b1 > MAX_KDF_LOOPS)
+		return -1;
+
 	return (i64)b2 << b1;
 }
 
