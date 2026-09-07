@@ -313,6 +313,10 @@ typedef sem_t cksem_t;
  * law relative to when the data is encrypted. It is then stored as a two
  * byte value in the header */
 #define MOORE 1.835          // world constant  [TIMES per YEAR]
+/* Largest KDF iteration count an archive may ask a decoder to perform.
+ * Bounds a hostile header to minutes rather than months; see enc_loops(). */
+#define MAX_KDF_LOOPS ((i64)255 << 24)
+
 #define ARBITRARY  1000000   // number of sha2 calls per one second in 2011
 #define T_ZERO 1293840000    // seconds since epoch in 2011
 
