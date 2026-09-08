@@ -74,6 +74,16 @@ AC_SUBST([lr_platform])
 AS_IF([test x"$lr_platform" = x"win32"], [AC_CHECK_TOOL([WINDRES], [windres], [no])])
 AC_SUBST([WINDRES])
 
+# A downloaded lrzip.exe should not need seven support DLLs beside it, so the
+# Windows build links everything statically by default. --disable-fully-static
+# restores the shared link for development.
+AC_ARG_ENABLE([fully-static],
+  [AS_HELP_STRING([--disable-fully-static],
+    [link Windows binaries against shared libs instead of statically])],
+  [], [enable_fully_static=yes])
+AM_CONDITIONAL([LR_FULLY_STATIC],
+  [test x"$lr_platform" = x"win32" && test x"$enable_fully_static" = x"yes"])
+
 dnl Checks for programs.
 AC_PROG_CC
 AC_PROG_CXX

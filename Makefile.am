@@ -117,6 +117,12 @@ lrzip_manifest.$(OBJEXT): $(srcdir)/platform/win32/lrzip.rc \
 		$(srcdir)/platform/win32/lrzip.rc -O coff -o $@
 CLEANFILES = lrzip_manifest.$(OBJEXT)
 endif
+
+if LR_FULLY_STATIC
+# -all-static is a libtool flag, not a gcc one, so it cannot be given to
+# configure -- its own test links would fail. It belongs here.
+lrzip_LDFLAGS = -all-static
+endif
 if STATIC
   lrzip_LDFLAGS = -all-static
 endif
@@ -134,6 +140,7 @@ dist_doc_DATA = \
 lrzipdir = $(includedir)
 
 EXTRA_DIST = \
+		BUILDING-WINDOWS.md \
 		lrztar \
 		description-pak \
 		autogen.sh \
