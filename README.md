@@ -48,11 +48,9 @@ lrzip - Long Range ZIP or LZMA RZIP
 >
 > Windows behaviours that needed handling rather than translating:
 >
-> - **Text mode.** Windows opens files in text mode by default, expanding `
-`
->   to `
-` and stopping reads at `0x1A`. Every archive written was silently
->   corrupt until the process was switched to binary mode at startup.
+> - **Text mode.** Windows opens files in text mode by default, expanding `\n`
+>   to `\r\n` and stopping reads at `0x1A`. Every archive written was
+>   silently corrupt until the process was switched to binary mode at startup.
 > - **Non-ASCII filenames.** Narrow `open`/`stat` go through the ANSI code page,
 >   so Japanese, Cyrillic and emoji names failed. An embedded manifest declares
 >   UTF-8 as the process code page (Windows 10 1903+).
