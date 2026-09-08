@@ -1,0 +1,108 @@
+name: windows
+
+on:
+  push:
+    branches: [ master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # UCRT64 rather than MINGW64: lrzip is built against the Universal CRT,
+      # which is what supplies the api-ms-win-crt-* imports the binary uses.
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            base-devel
+            git
+          pacboy: >-
+            toolchain:p
+            bzip2:p
+            lz4:p
+            lzo2:p
+            zlib:p
+
+      - name: autogen
+        run: ./autogen.sh
+
+      - name: configure
+        run: ./configure
+
+      - name: build
+        run: make -j2
+
+      # The point of the Windows build is a single downloadable file. If a
+      # support DLL creeps back into the import table, that has regressed and
+      # the job should fail rather than ship a binary that needs seven files
+      # beside it.
+      - name: verify the binary is self-contained
+        run: |
+          objdump -p lrzip.exe | grep 'DLL Name' | sed 's/.*DLL Name: //' | sort
+          bad=$(objdump -p lrzip.exe | grep 'DLL Name' \
+                | grep -icE 'libgcc|libstdc|libwinpthread|libbz2|liblz4|liblzo2|zlib' || true)
+          if [ "$bad" != "0" ]; then
+            echo "::error::$bad non-system DLL dependencies; expected 0"
+            exit 1
+          fi
+          echo "self-contained: only Windows system DLLs imported"
+
+      - name: smoke test
+        run: |
+          ./lrzip.exe -V
+          # Round trip a file with content that actually compresses.
+          for i in $(seq 1 2000); do echo "alpha beta gamma delta epsilon zeta"; done > sample.txt
+          before=$(md5sum sample.txt | cut -d' ' -f1)
+          ./lrzip.exe -f -q -o sample.lrz sample.txt
+          ./lrzip.exe -t sample.lrz
+          ./lrzip.exe -f -q -d -o sample.out sample.lrz
+          after=$(md5sum sample.out | cut -d' ' -f1)
+          test "$before" = "$after" || { echo "::error::round trip mismatch"; exit 1; }
+          echo "round trip OK"
+
+      # Non-ASCII filenames only work because of the UTF-8 manifest compiled in
+      # by windres. If windres is missing, the build still succeeds and this is
+      # the only thing that notices.
+      - name: non-ASCII filename test
+        run: |
+          cp sample.txt "日本語.txt"
+          ./lrzip.exe -f -q -o u.lrz "日本語.txt"
+          ./lrzip.exe -f -q -d -o u.out u.lrz
+          test "$(md5sum u.out | cut -d' ' -f1)" = "$(md5sum sample.txt | cut -d' ' -f1)" \
+            || { echo "::error::non-ASCII filename round trip failed"; exit 1; }
+          echo "non-ASCII filenames OK"
+
+      - name: package
+        run: |
+          ver=$(./lrzip.exe -V | head -1 | awk '{print $3}')
+          dir="lrzip-${ver}-windows-x86_64"
+          mkdir -p "$dir"
+          cp lrzip.exe README.md COPYING BUILDING-WINDOWS.md "$dir"/
+          cp doc/lrzip.conf.example "$dir"/ 2>/dev/null || true
+          echo "$dir" > package-name.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lrzip-windows-x86_64
+          path: lrzip-*-windows-x86_64/
+
+      - name: attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $dir = Get-Content package-name.txt
+          Compress-Archive -Path "$dir" -DestinationPath "$dir.zip"
+          gh release upload $env:GITHUB_REF_NAME "$dir.zip" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
