@@ -1,6 +1,86 @@
 lrzip - Long Range ZIP or LZMA RZIP
 ===================================
 
+> ## About this fork: a native Windows port
+>
+> **This is a fork of [lrzip](https://github.com/ckolivas/lrzip) that adds a
+> native Windows build. It is not the official release.** For the canonical
+> version, and for anything not Windows-specific, go upstream.
+>
+> ### Credit
+>
+> lrzip is the work of **Con Kolivas**, and is built on **rzip** by
+> **Andrew Tridgell**. Copyright notices in the source name Con Kolivas
+> (2006-2016, 2018, 2021-2022, 2026), Peter Hyman (2011), Serge Belyshev
+> (2011) and Andrew Tridgell (1998-2003), along with the contributors listed
+> under *Thanks* below. The compression engine, the file format, and every
+> algorithm in it are theirs.
+>
+> This fork adds portability code. It changes no compression algorithm and no
+> archive format: files produced here are ordinary lrzip archives, readable by
+> upstream lrzip on Linux, and vice versa.
+>
+> Licensed under the GNU GPL v2, unchanged from upstream. See `COPYING`.
+>
+> ### What was changed to make it run on Windows
+>
+> The port is built around a **platform abstraction layer** (`platform/`)
+> rather than `#ifdef`s scattered through the codebase. One header declares an
+> `lr_*` interface; two directories implement it, `platform/posix/` and
+> `platform/win32/`. The build selects a directory. Existing POSIX behaviour is
+> preserved — the POSIX backend calls the same functions the code always did.
+>
+> Replaced through that layer, with the Windows mechanism in brackets:
+>
+> | POSIX facility | Windows |
+> |---|---|
+> | `mmap`, `munmap`, `mremap` | `CreateFileMapping`/`MapViewOfFile`, with 64 KiB offset alignment handled internally |
+> | `mlock`, `munlock` | `VirtualLock`, `VirtualUnlock` |
+> | `pread`, `pwrite` | `ReadFile`/`WriteFile` with `OVERLAPPED`, restoring the file position afterwards |
+> | `sigaction`, `SIGINT`, `SIGTERM` | `SetConsoleCtrlHandler` |
+> | `setpriority`, `getpriority` | `SetThreadPriority`, mapped from nice values |
+> | `sysconf(_SC_PHYS_PAGES)`, `_SC_NPROCESSORS_ONLN` | `GlobalMemoryStatusEx`, `GetActiveProcessorCount` |
+> | `statvfs` | `GetDiskFreeSpaceEx` |
+> | `termios` echo control | `GetConsoleMode`/`SetConsoleMode` |
+> | `fsync`, `fchmod`, `fchown` | `_commit`, read-only attribute, no-op |
+> | `/dev/urandom` | `BCryptGenRandom` |
+> | `random()` for the rzip hash seed | glibc-compatible generator, so both platforms produce identical archives |
+>
+> Windows behaviours that needed handling rather than translating:
+>
+> - **Text mode.** Windows opens files in text mode by default, expanding `
+`
+>   to `
+` and stopping reads at `0x1A`. Every archive written was silently
+>   corrupt until the process was switched to binary mode at startup.
+> - **Non-ASCII filenames.** Narrow `open`/`stat` go through the ANSI code page,
+>   so Japanese, Cyrillic and emoji names failed. An embedded manifest declares
+>   UTF-8 as the process code page (Windows 10 1903+).
+> - **Deleting an open file.** POSIX unlinks a temp file while still using it;
+>   Windows refuses. Deletion is split into two halves, each a no-op on the
+>   platform that does not need it.
+> - **Mapping past end of file.** `mmap` allows it, `MapViewOfFile` does not.
+> - **Oversized reads.** Linux truncates a huge `read()`; Windows returns
+>   `EINVAL`.
+> - **Static linking**, so a downloaded `lrzip.exe` is one self-contained file
+>   needing no support DLLs.
+>
+> Two bugs found during the port are **not Windows-specific** and are present
+> upstream. Both are fixed here:
+>
+> - `sliding_match_len()` in `rzip.c` holds two sliding-window pointers across a
+>   remap. Linux hides this because `mmap` reuses the hinted address, but the
+>   window has moved, so the comparison reads the wrong bytes.
+> - `enc_loops()` bounded the KDF shift against undefined behaviour but not the
+>   workload, so two header bytes could demand months of hashing.
+>
+> ### Windows build
+>
+> See **[BUILDING-WINDOWS.md](BUILDING-WINDOWS.md)**. In short: in an MSYS2
+> UCRT64 shell, `./autogen.sh && ./configure && make`.
+>
+> Everything below this box is upstream documentation, unchanged.
+
 A compression utility that excels at compressing large files (usually > 10-50 MB).
 Larger files and/or more free RAM means that the utility will be able to more
 effectively compress your files (ie: faster / smaller size), especially if the
