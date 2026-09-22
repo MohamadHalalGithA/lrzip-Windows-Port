@@ -65,21 +65,28 @@ _Static_assert(sizeof(int64_t) == 8, "lrzip requires a 64-bit integer type");
 # include <malloc.h>
 #endif
 
-#ifdef HAVE_ALLOCA_H
-# include <alloca.h>
-#elif defined __GNUC__
-# define alloca __builtin_alloca
-#elif defined _AIX
-# define alloca __alloca
-#elif defined _MSC_VER
-# include <malloc.h>
-# define alloca _alloca
-#else
-# include <stddef.h>
-# ifdef  __cplusplus
+/* <malloc.h> above already supplies alloca on some platforms -- MinGW-w64
+   defines it as __builtin_alloca, the same thing the __GNUC__ branch below
+   would. Defining it a second time is a redefinition the compiler reports in
+   every translation unit that reaches this header, so only provide it when
+   nothing else has. */
+#ifndef alloca
+# ifdef HAVE_ALLOCA_H
+#  include <alloca.h>
+# elif defined __GNUC__
+#  define alloca __builtin_alloca
+# elif defined _AIX
+#  define alloca __alloca
+# elif defined _MSC_VER
+#  include <malloc.h>
+#  define alloca _alloca
+# else
+#  include <stddef.h>
+#  ifdef  __cplusplus
 extern "C"
-# endif
+#  endif
 void *alloca (size_t);
+# endif
 #endif
 
 #ifdef HAVE_ENDIAN_H
